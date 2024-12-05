@@ -186,7 +186,8 @@ class DP3(BasePolicy):
             nobs['point_cloud'] = nobs['point_cloud'][..., :3]
         this_n_point_cloud = nobs['point_cloud']
         
-        
+        # Add a breakpoint
+        # import pdb; pdb.set_trace()
         value = next(iter(nobs.values()))
         B, To = value.shape[:2]
         T = self.horizon
@@ -278,6 +279,7 @@ class DP3(BasePolicy):
         
         if self.obs_as_global_cond:
             # reshape B, T, ... to B*T
+            # import pdb; pdb.set_trace()
             this_nobs = dict_apply(nobs, 
                 lambda x: x[:,:self.n_obs_steps,...].reshape(-1,*x.shape[2:]))
             nobs_features = self.obs_encoder(this_nobs)

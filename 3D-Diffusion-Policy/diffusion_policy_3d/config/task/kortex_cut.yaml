@@ -21,7 +21,7 @@ env_runner:
 
 dataset:
   _target_: diffusion_policy_3d.dataset.kortex_dataset.KortexDataset
-  zarr_path: data/kortex_data/cut_50.zarr
+  zarr_path: data/kortex_data/cut_10.zarr
   horizon: ${horizon}
   pad_before: ${eval:'${n_obs_steps}-1'}
   pad_after: ${eval:'${n_action_steps}-1'}
