@@ -117,17 +117,17 @@ class KortexEnv(gym.Env):
 
         # Define extrinsics matrix (from your reference)
         self.extrinsics_matrix = np.array([
-            [-9.99975517e-01, -5.96775278e-03, -3.65387159e-03, 3.19190930e-01],
-            [6.32579231e-04,  4.42935136e-01, -8.96553437e-01, 4.15892902e-01],
-            [6.96883737e-03, -8.96533798e-01, -4.42920516e-01, 3.58429336e-01],
-            [0.00000000e+00,  0.00000000e+00,  0.00000000e+00, 1.00000000e+00]
+            [-0.9995885060604603, 0.02737040572434423, -0.008583673007599053, 0.3145712335775515], 
+            [0.019431110570558213, 0.42596851329953994, -0.9045293016919754, 0.5144627713101816], 
+            [-0.02110095954717077, -0.9043238836655059, -0.4263250672178739, 0.3630794805194548], 
+            [0.0, 0.0, 0.0, 1.0]
         ])
 
         # Define workspace boundaries
         self.WORK_SPACE = [
-            [-0.25, 0.40],
-            [-1.00, -0.20],
-            [-0.40, 0.05]
+            [0.08, 0.72],
+            [-0.49, 0.31],
+            [-0.02, 0.43]
         ]
 
         # Define action and observation spaces
@@ -368,7 +368,7 @@ class KortexEnv(gym.Env):
         #     obs_depth = np.zeros((self.img_size, self.img_size), dtype=np.float32)
 
         # Save point cloud raw data for visualization
-        np.save(f"point_cloud_raw_{self.step_count}.npy", self.point_cloud_raw)
+        # np.save(f"point_cloud_raw_{self.step_count}.npy", self.point_cloud_raw)
         # Process point cloud
         if self.point_cloud_raw is not None:
             point_cloud = self.process_point_cloud(self.point_cloud_raw)
@@ -393,7 +393,7 @@ class KortexEnv(gym.Env):
         point_cloud = point_cloud.astype(np.float32) # (T, 1024, 6)
         
         # Save the point cloud for visualization
-        np.save(f"point_cloud_{self.step_count}.npy", point_cloud)
+        # np.save(f"point_cloud_{self.step_count}.npy", point_cloud)
 
         obs = {
             "agent_pos": agent_pos,
@@ -426,6 +426,9 @@ class KortexEnv(gym.Env):
 
         # Combine transformed XYZ with RGB
         points_transformed = np.hstack((point_xyz_transformed, point_rgb))
+        
+        # Save point cloud for visualization
+        # np.save(f"point_cloud_transformed_{self.step_count}.npy", points_transformed)
 
         # Crop point cloud to workspace
         mask = (
@@ -434,6 +437,22 @@ class KortexEnv(gym.Env):
             (points_transformed[:, 2] > self.WORK_SPACE[2][0]) & (points_transformed[:, 2] < self.WORK_SPACE[2][1])
         )
         points_cropped = points_transformed[mask]
+
+        # Remove dark points (assumed to be plane and background)
+        # brightness_threshold = 0.1  # Adjust threshold as needed (range 0-1)
+        # rgb_brightness = np.mean(points_cropped[:, 3:], axis=1)  # Calculate brightness
+        # bright_points_mask = rgb_brightness > brightness_threshold
+        # points_cropped = points_cropped[bright_points_mask]
+
+        # Detect and remove the dominant plane
+        points_xyz_cropped = points_cropped[:, :3]
+        plane_model, inliers = self.detect_plane(points_xyz_cropped)  # RANSAC plane detection
+        points_cropped = points_cropped[~inliers]  # Remove inliers (plane points)
+
+        # Remove outliers using statistical methods
+        points_cropped = self.remove_outliers(points_cropped)
+        
+        # np.save(f"point_cloud_cropped_{self.step_count}.npy", points_cropped)
 
         # If not enough points, pad with zeros
         if points_cropped.shape[0] < num_points:
@@ -453,7 +472,42 @@ class KortexEnv(gym.Env):
             sampled_points = points_cropped  # Already padded if needed
 
         point_cloud = sampled_points.astype(np.float32)
+        # np.save(f"point_cloud_downsampled_{self.step_count}.npy", point_cloud)
         return point_cloud
+
+    def detect_plane(self, points_xyz):
+        """
+        Detect the dominant plane using RANSAC and return inlier mask.
+        """
+        from sklearn.linear_model import RANSACRegressor
+
+        # Fit a plane using RANSAC
+        ransac = RANSACRegressor(residual_threshold=0.01, max_trials=100)
+        xy = points_xyz[:, :2]
+        z = points_xyz[:, 2]
+        ransac.fit(xy, z)
+
+        # Get inliers
+        inliers = ransac.inlier_mask_
+        return ransac.estimator_, inliers
+
+    def remove_outliers(self, points, neighbors=30, std_ratio=1.0):
+        """
+        Remove statistical outliers from the point cloud.
+        """
+        from sklearn.neighbors import NearestNeighbors
+        import numpy as np
+
+        points_xyz = points[:, :3]
+        nbrs = NearestNeighbors(n_neighbors=neighbors).fit(points_xyz)
+        distances, _ = nbrs.kneighbors(points_xyz)
+        mean_distances = np.mean(distances[:, 1:], axis=1)
+        threshold = np.mean(mean_distances) + std_ratio * np.std(mean_distances)
+
+        # Filter outliers
+        mask = mean_distances < threshold
+        return points[mask]
+
 
     def farthest_point_sampling(self, points_xyz, num_points):
         """
