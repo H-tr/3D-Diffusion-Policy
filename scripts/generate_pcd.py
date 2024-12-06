@@ -35,16 +35,21 @@ def create_pointcloud(rgb_path, depth_path, save_dir, frame_idx):
     
     # Handle distortion
     D = np.array([
-        0.11890428513288498, -2.5930066108703613, 0.0006491912645287812,
-        -0.0004916685866191983, 1.8071327209472656, 0.0036302555818110704,
-        -2.3954696655273438, 1.7094197273254395
+        0.11890428513288498,
+        -2.5930066108703613,
+        0.0006491912645287812,
+        -0.0004916685866191983,
+        1.8071327209472656,
+        0.0036302555818110704,
+        -2.3954696655273438,
+        1.7094197273254395
     ])
     
     # Create camera intrinsic matrix
     K = np.array([
-        [972.8271484375, 0.0, 1027.150634765625],
-        [0.0, 972.6817016601562, 773.43701171875],
-        [0.0, 0.0, 1.0]
+        [608.0169677734375, 0.0, 641.7816162109375],
+        [0.0, 607.9260864257812, 363.21063232421875],
+        [0.0,0.0, 1.0]
     ])
     
     # Undistort RGB image
@@ -118,12 +123,12 @@ def create_pointcloud(rgb_path, depth_path, save_dir, frame_idx):
     pointcloud_data = np.concatenate([points, colors], axis=1)  # [x, y, z, r, g, b]
     
     # Save pointcloud
-    output_path = os.path.join(save_dir, f'pcd_{frame_idx}.npy')
+    output_path = os.path.join(save_dir + "/pcd", f'pcd_{frame_idx}.npy')
     np.save(output_path, pointcloud_data)
 
 def main():
     # 1. Input is a list of task names that user defined (manually input)
-    user_defined_tasks = ['pour_50']  # Replace with your task names
+    user_defined_tasks = ['pour']  # Replace with your task names
 
     root_dir = Path("/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data")
 
@@ -144,10 +149,13 @@ def main():
             print(f"Processing episode_{i} in task {task_name}")
 
             # 4. In current folder, find numbers of rgb, numbers of depth, check if they are the same
-            no_frames = len(list(current_folder.glob("rgb_*")))
+            no_frames = len(list((current_folder / "rgb").glob("rgb_*")))
+            # If current folder doesn't have pcd, create one
+            if not (current_folder / "pcd").is_dir():
+                os.makedirs(current_folder / "pcd")
             for frame_idx in range(no_frames):
-                rgb_path = current_folder / f"rgb_{frame_idx}.jpg"
-                depth_path = current_folder / f"depth_{frame_idx}.npy"
+                rgb_path = current_folder / "rgb" / f"rgb_{frame_idx}.jpg"
+                depth_path = current_folder / "depth" / f"depth_{frame_idx}.npy"
                 if not rgb_path.exists():
                     raise FileNotFoundError(f"RGB file not found: {rgb_path}")
                 if not depth_path.exists():
