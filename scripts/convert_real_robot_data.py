@@ -31,10 +31,12 @@ def quaternion_to_6d(q: np.ndarray) -> np.ndarray:
     return rot_6d
 
 
-extrinsics_matrix = np.array([[-9.99975517e-01, -5.96775278e-03, -3.65387159e-03, 3.19190930e-01],
-                                [ 6.32579231e-04,  4.42935136e-01, -8.96553437e-01, 4.15892902e-01],
-                                [ 6.96883737e-03, -8.96533798e-01, -4.42920516e-01, 3.58429336e-01],
-                                [ 0.00000000e+00,  0.00000000e+00,  0.00000000e+00, 1.00000000e+00]])
+extrinsics_matrix = np.array([
+            [-0.9995885060604603, 0.02737040572434423, -0.008583673007599053, 0.3145712335775515], 
+            [0.019431110570558213, 0.42596851329953994, -0.9045293016919754, 0.5144627713101816], 
+            [-0.02110095954717077, -0.9043238836655059, -0.4263250672178739, 0.3630794805194548], 
+            [0.0, 0.0, 0.0, 1.0]
+        ])
 
 def farthest_point_sampling(points, num_points=1024, use_cuda=True):
     K = [num_points]
@@ -58,23 +60,30 @@ def preprocess_point_cloud(points, use_cuda=True, step_index=1):
     # scale
     point_xyz = points[..., :3]
     point_homogeneous = np.hstack((point_xyz, np.ones((point_xyz.shape[0], 1))))
-    point_homogeneous = np.dot(point_homogeneous, extrinsics_matrix)
-    point_xyz = point_homogeneous[..., :-1]
-    points[..., :3] = point_xyz
+    point_transformed = point_homogeneous @ extrinsics_matrix.T
+    point_xyz_transformed = point_transformed[..., :3]
+    points[..., :3] = point_xyz_transformed
     
     # save the point cloud for debug
     # np.save(f'/data/home/tianrun/3D-Diffusion-Policy/tmp/scaled_pcd_{step_index}.npy', points)
     
+    # Define workspace boundaries
     WORK_SPACE = [
-        [-0.25, 0.40],
-        [-1.00, -0.20],
-        [-0.40, 0.05]
+        [0.08, 0.72],
+        [-0.49, 0.31],
+        [-0.02, 0.43]
     ]
     
      # crop
     points = points[np.where((points[..., 0] > WORK_SPACE[0][0]) & (points[..., 0] < WORK_SPACE[0][1]) &
                                 (points[..., 1] > WORK_SPACE[1][0]) & (points[..., 1] < WORK_SPACE[1][1]) &
                                 (points[..., 2] > WORK_SPACE[2][0]) & (points[..., 2] < WORK_SPACE[2][1]))]
+    
+    points_xyz_cropped = points[..., :3]
+    plane_model, inliers = detect_plane(points_xyz_cropped)
+    points = points[~inliers]
+    
+    points = remove_outliers(points)
     
     points_xyz = points[..., :3]
     points_xyz, sample_indices = farthest_point_sampling(points_xyz, num_points, use_cuda)
@@ -94,15 +103,46 @@ def preproces_image(image):
     image = image.cpu().numpy()
     return image
 
+def detect_plane(points_xyz):
+    """
+    Detect the dominant plane using RANSAC and return inlier mask.
+    """
+    from sklearn.linear_model import RANSACRegressor
 
+    # Fit a plane using RANSAC
+    ransac = RANSACRegressor(residual_threshold=0.01, max_trials=100)
+    xy = points_xyz[:, :2]
+    z = points_xyz[:, 2]
+    ransac.fit(xy, z)
 
-expert_data_path = '/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data/pour_50/'
-save_data_path = '/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data/pour_50.zarr'
+    # Get inliers
+    inliers = ransac.inlier_mask_
+    return ransac.estimator_, inliers
+
+def remove_outliers(points, neighbors=30, std_ratio=1.0):
+    """
+    Remove statistical outliers from the point cloud.
+    """
+    from sklearn.neighbors import NearestNeighbors
+    import numpy as np
+
+    points_xyz = points[:, :3]
+    nbrs = NearestNeighbors(n_neighbors=neighbors).fit(points_xyz)
+    distances, _ = nbrs.kneighbors(points_xyz)
+    mean_distances = np.mean(distances[:, 1:], axis=1)
+    threshold = np.mean(mean_distances) + std_ratio * np.std(mean_distances)
+
+    # Filter outliers
+    mask = mean_distances < threshold
+    return points[mask]
+
+expert_data_path = '/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data/pour/'
+save_data_path = '/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data/pour.zarr'
 
 # Find all episode directories that contain rgb_*.jpg files
 demo_dirs = []
 for root, _, files in os.walk(expert_data_path):
-    if any(f.startswith('rgb_') and f.endswith('.jpg') for f in files):
+    if any(f.startswith('abs_') and f.endswith('.npy') for f in files):
         demo_dirs.append(root)
 demo_dirs = sorted(demo_dirs)
 
@@ -141,13 +181,13 @@ for demo_dir in demo_dirs:
     # depth_len = len(depth_files)
     # pcd_len = len(pcd_files)
     
-    rgb_len = len(list(Path(demo_dir).glob('rgb_*.jpg')))
-    depth_len = len(list(Path(demo_dir).glob('depth_*.npy')))
-    pcd_len = len(list(Path(demo_dir).glob('pcd_*.npy')))
+    rgb_len = len(list((Path(demo_dir) / "rgb").glob('rgb_*.jpg')))
+    depth_len = len(list((Path(demo_dir) / "depth").glob('depth_*.npy')))
+    pcd_len = len(list((Path(demo_dir) / "pcd").glob('pcd_*.npy')))
     
     assert rgb_len == depth_len and depth_len == pcd_len, "RGB, depth, and pointcloud files are not in the same length."
     
-    action_values = np.load(os.path.join(demo_dir, 'abs_ee_pose.npy'))
+    action_values = np.load(os.path.join(demo_dir, 'delta_ee_pose.npy'))
     # TODO: Current robot action: 3 position and 4 orientation. Convert it to 3 position and 6 rotation
     action_values = np.array([
         np.concatenate([
@@ -171,11 +211,11 @@ for demo_dir in demo_dirs:
         total_count += 1
         
         # Load RGB image
-        obs_image = cv2.imread(os.path.join(demo_dir, f"rgb_{step_idx}.jpg"))
+        obs_image = cv2.imread(os.path.join(demo_dir, "rgb", f"rgb_{step_idx}.jpg"))
         obs_image = cv2.cvtColor(obs_image, cv2.COLOR_BGR2RGB)
         
         # Load depth
-        obs_depth = np.load(os.path.join(demo_dir, f"depth_{step_idx}.npy"))
+        obs_depth = np.load(os.path.join(demo_dir, "depth", f"depth_{step_idx}.npy"))
         
         if np.issubdtype(obs_depth.dtype, np.floating):
             # Repalce nan with 0
@@ -184,7 +224,7 @@ for demo_dir in demo_dirs:
             obs_depth = (obs_depth * 1000).astype(np.uint16)
         
         # Load pointcloud
-        pcd_path = os.path.join(demo_dir, f"pcd_{step_idx}.npy")
+        pcd_path = os.path.join(demo_dir, "pcd", f"pcd_{step_idx}.npy")
         obs_pointcloud = np.load(pcd_path)
         
         # Process data

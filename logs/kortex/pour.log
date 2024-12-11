@@ -1,0 +1,16 @@
+[33mgpu id (to use): 0[0m
+[33mTrain mode[0m
+/data/home/tianrun/3D-Diffusion-Policy/third_party/gym-0.21.0/gym/logger.py:34: UserWarning: [33mWARN: Box bound precision lowered by casting to float32[0m
+  warnings.warn(colorize("%s: %s" % ("WARN", msg % args), "yellow"))
+Traceback (most recent call last):
+  File "train.py", line 29, in <module>
+    from diffusion_policy_3d.env_runner.base_runner import BaseRunner
+  File "/data/home/tianrun/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env_runner/base_runner.py", line 9, in <module>
+    from diffusion_policy_3d.env import KortexEnv
+  File "/data/home/tianrun/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/__init__.py", line 5, in <module>
+    from .kortex import KortexEnv
+  File "/data/home/tianrun/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/kortex/__init__.py", line 1, in <module>
+    from .kortex_wrapper import KortexEnv
+  File "/data/home/tianrun/3D-Diffusion-Policy/3D-Diffusion-Policy/diffusion_policy_3d/env/kortex/kortex_wrapper.py", line 4, in <module>
+    import rospy
+ModuleNotFoundError: No module named 'rospy'
