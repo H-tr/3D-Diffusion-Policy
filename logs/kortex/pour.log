@@ -1,42 +1,0 @@
-[33mgpu id (to use): 0[0m
-[33mTrain mode[0m
-/data/home/tianrun/3D-Diffusion-Policy/third_party/gym-0.21.0/gym/logger.py:34: UserWarning: [33mWARN: Box bound precision lowered by casting to float32[0m
-  warnings.warn(colorize("%s: %s" % ("WARN", msg % args), "yellow"))
-/data/home/tianrun/anaconda3/envs/dp3/lib/python3.8/site-packages/hydra/_internal/defaults_list.py:251: UserWarning: In 'dp3.yaml': Defaults list is missing `_self_`. See https://hydra.cc/docs/upgrades/1.0_to_1.1/default_composition_order for more information
-  warnings.warn(msg, UserWarning)
-[DP3Encoder] point cloud shape: [1024, 3]
-[DP3Encoder] state shape: [10]
-[DP3Encoder] imagination point shape: None
-[PointNetEncoderXYZ] use_layernorm: True
-[PointNetEncoderXYZ] use_final_norm: layernorm
-[DP3Encoder] output dim: 128
-[DiffusionUnetHybridPointcloudPolicy] use_pc_color: False
-[DiffusionUnetHybridPointcloudPolicy] pointnet_type: pointnet
-[2024-12-11 18:10:39,757][diffusion_policy_3d.model.diffusion.conditional_unet1d][INFO] - number of parameters: 2.550959e+08
-wandb: Using wandb-core as the SDK backend.  Please refer to https://wandb.me/wandb-core for more information.
-wandb: Currently logged in as: lytinn. Use `wandb login --relogin` to force relogin
-wandb: Tracking run with wandb version 0.19.0
-wandb: Run data is saved locally in /data/home/tianrun/3D-Diffusion-Policy/3D-Diffusion-Policy/data/outputs/kortex_pour-dp3-0322_seed0/wandb/run-20241211_181042-r55wodfd
-wandb: Run `wandb offline` to turn off syncing.
-wandb: Syncing run 0
-wandb: ⭐️ View project at https://wandb.ai/lytinn/dp3
-wandb: 🚀 View run at https://wandb.ai/lytinn/dp3/runs/r55wodfd
-----------------------------------
-Class name: DP3
-  Number of parameters: 255.1599M
-   _dummy_variable: 0.0000M (0.00%)
-   obs_encoder: 0.0639M (0.03%)
-   model: 255.0959M (99.97%)
-   mask_generator: 0.0000M (0.00%)
-----------------------------------
-Replay Buffer: state, shape (9298, 10), dtype float32, range -0.99~1.00
-Replay Buffer: action, shape (9298, 10), dtype float32, range -0.14~1.00
-Replay Buffer: point_cloud, shape (9298, 1024, 6), dtype float64, range -0.49~1.00
-Replay Buffer: img, shape (9298, 84, 84, 3), dtype uint8, range 2.00~254.00
---------------------------
-ROS not available, skipping go_homepose.
------------------------------
-[WandB] group: kortex_pour-dp3-0322
-[WandB] name: 0
------------------------------
-Training epoch 0:   0%|          | 0/72 [00:00<?, ?it/s]Training epoch 0:   1%|▏         | 1/72 [00:01<01:14,  1.05s/it, loss=0.84]Training epoch 0:  32%|███▏      | 23/72 [00:02<00:03, 12.78it/s, loss=1.53]Training epoch 0:  62%|██████▎   | 45/72 [00:03<00:01, 16.61it/s, loss=0.506]Training epoch 0:  93%|█████████▎| 67/72 [00:04<00:00, 18.42it/s, loss=0.444]                                                                             Eval in Kortex pour Env:   0%|          | 0/20 [00:00<?, ?it/s]slurmstepd: error: *** JOB 49589 ON crane6 CANCELLED AT 2024-12-11T18:11:35 ***
