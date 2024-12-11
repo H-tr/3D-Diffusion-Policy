@@ -567,7 +567,7 @@ class KortexEnv(gym.Env):
             if ROS_AVAILABLE:
                 rospy.logwarn("Current pose not available, using home_ee_pose directly.")
             else:
-                print("Current pose not available, using home_ee_pose directly.")
+                pass
             current_ee_pose = self.home_ee_pose  # fallback
 
         ee_trajectory = interpolate_trajectory(

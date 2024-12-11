@@ -6,7 +6,7 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=tianrunhu@gmail.com
 #SBATCH --gres=gpu:1
-#SBATCH --nodelist=crane0
+#SBATCH --nodelist=crane6
 
 bash scripts/train_policy.sh dp3 kortex_pour 0322 0 0
 

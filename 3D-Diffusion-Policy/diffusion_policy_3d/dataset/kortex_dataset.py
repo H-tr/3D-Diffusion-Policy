@@ -57,7 +57,7 @@ class KortexDataset(BaseDataset):
         val_set.train_mask = ~self.train_mask
         return val_set
 
-    def get_normalizer(self, mode='limits', **kwargs):
+    def get_normalizer(self, mode='gaussian', **kwargs):
         data = {
             'action': self.replay_buffer['action'],
             'agent_pos': self.replay_buffer['state'][...,:],

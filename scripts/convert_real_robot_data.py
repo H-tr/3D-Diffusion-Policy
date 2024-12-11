@@ -188,7 +188,8 @@ for demo_dir in demo_dirs:
     assert rgb_len == depth_len and depth_len == pcd_len, "RGB, depth, and pointcloud files are not in the same length."
     
     action_values = np.load(os.path.join(demo_dir, 'delta_ee_pose.npy'))
-    # TODO: Current robot action: 3 position and 4 orientation. Convert it to 3 position and 6 rotation
+    state_values = np.load(os.path.join(demo_dir, 'abs_ee_pose.npy'))
+    
     action_values = np.array([
         np.concatenate([
             action[:3],  # Keep position (x,y,z)
@@ -205,6 +206,23 @@ for demo_dir in demo_dirs:
         ])
         for i in range(len(action_values))
     ])
+    
+    state_values = np.array([
+        np.concatenate([
+            state[:3],  # Keep position (x,y,z)
+            quaternion_to_6d(state[3:])  # Convert quaternion to 6D rotation
+        ])
+        for state in state_values
+    ])
+    state_values = np.array([
+        np.concatenate([
+            state_values[i],  # Position and rotation (9D)
+            [button_state_values[i, 1]]  # Add button state (1D)
+        ])
+        for i in range(len(state_values))
+    ])
+    
+    # Load the first RGB image
     
     demo_length = rgb_len
     for step_idx in tqdm.tqdm(range(demo_length)):
@@ -236,7 +254,7 @@ for demo_dir in demo_dirs:
         # np.save(f'/data/home/tianrun/3D-Diffusion-Policy/tmp/pcd_{step_idx}.npy', obs_pointcloud)
         
         # Placeholder for state and action (you'll need to provide these)
-        robot_state = action_values[step_idx]
+        robot_state = state_values[step_idx]
         action = action_values[step_idx]
         
         # Store processed data
