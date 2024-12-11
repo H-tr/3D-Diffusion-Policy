@@ -91,40 +91,39 @@ class KortexEnv(gym.Env):
             )
             print("Kortex Robot gripper service client connected!")
 
-        # Publisher for desired poses
-        self.desired_pose_pub = rospy.Publisher(
-            "/desired_pose", PoseStamped, queue_size=10
-        )
+            # Publisher for desired poses
+            self.desired_pose_pub = rospy.Publisher(
+                "/desired_pose", PoseStamped, queue_size=10
+            )
 
-        # Initialize current_pose and other necessary variables
-        self.current_pose = None
-        self.current_velocity = None
-        self.last_position_error = np.zeros(3)
-        self.last_angular_error = np.zeros(3)
-        self.last_time = rospy.Time.now()
+            # Initialize current_pose and other necessary variables
+            self.current_pose = None
+            self.current_velocity = None
+            self.last_position_error = np.zeros(3)
+            self.last_angular_error = np.zeros(3)
+            self.last_time = rospy.Time.now()
 
-        # Initialize joint data
-        self.joint_positions = None
-        self.joint_velocities = None
-        self.joint_torques = None
-        self.observed_btn_states = [[0, 0, 0, 0, 0, 0]]
+            # Initialize joint data
+            self.joint_positions = None
+            self.joint_velocities = None
+            self.joint_torques = None
+            self.observed_btn_states = [[0, 0, 0, 0, 0, 0]]
 
-        # Subscribers
-        rospy.Subscriber(
-            f"/{robot_name}/base_feedback",
-            BaseCyclic_Feedback,
-            self.base_feedback_callback,
-        )
-        rospy.Subscriber(
-            f"/{robot_name}/joint_states",
-            JointState,
-            self.joint_states_callback,
-        )
-        rospy.Subscriber("/rgb/image_raw", Image, self.kinect_rgb_callback)
-        rospy.Subscriber("/depth_to_rgb/image", Image, self.kinect_depth_callback)
-        # rospy.Subscriber("/points2", PointCloud2, self.pointcloud_callback)
-
-        if ROS_AVAILABLE:
+            # Subscribers
+            rospy.Subscriber(
+                f"/{robot_name}/base_feedback",
+                BaseCyclic_Feedback,
+                self.base_feedback_callback,
+            )
+            rospy.Subscriber(
+                f"/{robot_name}/joint_states",
+                JointState,
+                self.joint_states_callback,
+            )
+            rospy.Subscriber("/rgb/image_raw", Image, self.kinect_rgb_callback)
+            rospy.Subscriber("/depth_to_rgb/image", Image, self.kinect_depth_callback)
+            # rospy.Subscriber("/points2", PointCloud2, self.pointcloud_callback)
+            
             self.last_time = rospy.Time.now()
         else:
             self.bridge = None
@@ -446,7 +445,10 @@ class KortexEnv(gym.Env):
             gripper_state = np.array([self.get_gripper_state()], dtype=np.float32)
             state = np.concatenate([translation, rotation_6d, gripper_state])
         else:
-            raise ValueError("No current pose available.")
+            if ROS_AVAILABLE:
+                raise ValueError("No current pose available.")
+            else:
+                state = np.zeros(10, dtype=np.float32)
 
         # Episode ends flag
         # episode_ends = np.array([float(self.step_count >= self.max_step)], dtype=np.float32)  # Changed to array
