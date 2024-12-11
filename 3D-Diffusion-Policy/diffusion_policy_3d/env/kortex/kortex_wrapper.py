@@ -14,6 +14,7 @@ from scipy.spatial.transform import Rotation as R
 from sensor_msgs.msg import Image, JointState, PointCloud2
 from cv_bridge import CvBridge
 import cv2
+import open3d as o3d
 
 # Import the PD controller and utility functions
 from diffusion_policy_3d.env.kortex.pd_controller import KortexPDController
@@ -26,6 +27,8 @@ import sensor_msgs.point_cloud2 as pc2  # For PointCloud2 processing
 from gym import spaces
 
 my_path = os.path.dirname(os.path.abspath(__file__))
+
+DEBUG = True
 
 
 class KortexEnv(gym.Env):
@@ -109,7 +112,7 @@ class KortexEnv(gym.Env):
         )
         rospy.Subscriber("/rgb/image_raw", Image, self.kinect_rgb_callback)
         rospy.Subscriber("/depth_to_rgb/image", Image, self.kinect_depth_callback)
-        rospy.Subscriber("/points2", PointCloud2, self.pointcloud_callback)
+        # rospy.Subscriber("/points2", PointCloud2, self.pointcloud_callback)
 
         # Wait for the initial pose to be received
         while self.current_pose is None and not rospy.is_shutdown():
@@ -127,8 +130,14 @@ class KortexEnv(gym.Env):
         self.WORK_SPACE = [
             [0.08, 0.72],
             [-0.49, 0.31],
-            [-0.02, 0.43]
+            [0.03, 0.43]
         ]
+        
+        self.fx = 608.0169677734375
+        self.fy = 641.7816162109375
+        self.cx = 607.9260864257812
+        self.cy = 363.21063232421875
+        self.depth_scale = 1000.0
 
         # Define action and observation spaces
 
@@ -302,6 +311,8 @@ class KortexEnv(gym.Env):
             done (bool): Whether the episode has ended.
             info (Dict): Additional information.
         """
+        if DEBUG:
+            print(f"action: {action}")
         # Extract delta translation, delta rotation (6D), and gripper command from action
         delta_translation = action[:3]
         delta_rotation_6d = action[3:9]
@@ -336,6 +347,7 @@ class KortexEnv(gym.Env):
 
         # Get observation
         obs = self.get_observation()
+        # obs = None
 
         # Set reward (you can customize this)
         reward = 0.0
@@ -350,6 +362,32 @@ class KortexEnv(gym.Env):
         info = {}
 
         return obs, reward, done, info
+
+    def generate_point_cloud_from_rgbd(self, rgb_image, depth_image):
+        # Convert images to Open3D images
+        rgb_o3d = o3d.geometry.Image(cv2.cvtColor(rgb_image, cv2.COLOR_BGR2RGB))
+        depth_o3d = o3d.geometry.Image((depth_image).astype(np.uint16))
+        
+        # Create camera intrinsic
+        height, width = rgb_image.shape[:2]
+        intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, self.fx, self.fy, self.cx, self.cy)
+        
+        # Create RGBD image
+        rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
+            rgb_o3d, 
+            depth_o3d, 
+            depth_scale=self.depth_scale, 
+            depth_trunc=1.5, 
+            convert_rgb_to_intensity=False
+        )
+        
+        # Create point cloud
+        pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image, intrinsic)
+        points_xyz = np.asarray(pcd.points)
+        points_rgb = np.asarray(pcd.colors)  # values in [0, 1]
+        if points_xyz.shape[0] == 0:
+            return None
+        return np.hstack((points_xyz, points_rgb))
 
     def get_observation(self):
         """
@@ -370,11 +408,22 @@ class KortexEnv(gym.Env):
         # Save point cloud raw data for visualization
         # np.save(f"point_cloud_raw_{self.step_count}.npy", self.point_cloud_raw)
         # Process point cloud
+        if self.rgb_image is not None and self.depth_image is not None:
+            point_cloud_from_rgbd = self.generate_point_cloud_from_rgbd(self.rgb_image, self.depth_image)
+            if point_cloud_from_rgbd is not None and point_cloud_from_rgbd.shape[0] > 0:
+                self.point_cloud_raw = point_cloud_from_rgbd
+
         if self.point_cloud_raw is not None:
+            if DEBUG:
+                time1 = time.time()
             point_cloud = self.process_point_cloud(self.point_cloud_raw)
+            if DEBUG:
+                time2 = time.time()
+                print(f"Time to process point cloud: {time2 - time1} s")
         else:
             # If no point cloud is available, create a placeholder
             point_cloud = np.zeros((self.num_points, 6), dtype=np.float32)
+            print("No point cloud available.")
 
         # Get state (translation, rotation in 6D, gripper)
         if self.current_pose is not None:
@@ -385,7 +434,7 @@ class KortexEnv(gym.Env):
             gripper_state = np.array([self.get_gripper_state()], dtype=np.float32)
             state = np.concatenate([translation, rotation_6d, gripper_state])
         else:
-            state = np.zeros(10, dtype=np.float32)
+            raise ValueError("No current pose available.")
 
         # Episode ends flag
         # episode_ends = np.array([float(self.step_count >= self.max_step)], dtype=np.float32)  # Changed to array
@@ -407,28 +456,37 @@ class KortexEnv(gym.Env):
         Processes the raw point cloud to generate a downsampled point cloud within the workspace.
         """
         num_points = self.num_points
+        
+        if DEBUG:
+            np.save(f"point_cloud_raw_{self.step_count}.npy", points)
 
         # Extract XYZ and RGB
         if points.shape[1] >= 6:
             # Points with RGB
             point_xyz = points[:, :3]
-            point_rgb = points[:, 3:6] / 255.0  # Normalize RGB values if needed
+            point_rgb = points[:, 3:6]  # Normalize RGB values if needed
         else:
             # Points without RGB, create dummy RGB values
             point_xyz = points[:, :3]
             point_rgb = np.zeros_like(point_xyz)
 
         # Apply extrinsics transformation
+        if DEBUG:
+            t1 = time.time()
         ones = np.ones((point_xyz.shape[0], 1))
         points_homogeneous = np.hstack((point_xyz, ones))
         points_transformed = points_homogeneous @ self.extrinsics_matrix.T
         point_xyz_transformed = points_transformed[:, :3]
+        if DEBUG:
+            t2 = time.time()
+        print(f"Time to transform point cloud: {t2 - t1} s")
 
         # Combine transformed XYZ with RGB
         points_transformed = np.hstack((point_xyz_transformed, point_rgb))
         
         # Save point cloud for visualization
-        # np.save(f"point_cloud_transformed_{self.step_count}.npy", points_transformed)
+        if DEBUG:
+            np.save(f"point_cloud_transformed_{self.step_count}.npy", points_transformed)
 
         # Crop point cloud to workspace
         mask = (
@@ -437,6 +495,10 @@ class KortexEnv(gym.Env):
             (points_transformed[:, 2] > self.WORK_SPACE[2][0]) & (points_transformed[:, 2] < self.WORK_SPACE[2][1])
         )
         points_cropped = points_transformed[mask]
+        
+        if DEBUG:
+            t3 = time.time()
+            print(f"Time to crop point cloud: {t3 - t2} s")
 
         # Remove dark points (assumed to be plane and background)
         # brightness_threshold = 0.1  # Adjust threshold as needed (range 0-1)
@@ -445,14 +507,18 @@ class KortexEnv(gym.Env):
         # points_cropped = points_cropped[bright_points_mask]
 
         # Detect and remove the dominant plane
-        points_xyz_cropped = points_cropped[:, :3]
-        plane_model, inliers = self.detect_plane(points_xyz_cropped)  # RANSAC plane detection
-        points_cropped = points_cropped[~inliers]  # Remove inliers (plane points)
+        # points_xyz_cropped = points_cropped[:, :3]
+        # plane_model, inliers = self.detect_plane(points_xyz_cropped)  # RANSAC plane detection
+        # points_cropped = points_cropped[~inliers]  # Remove inliers (plane points)
 
         # Remove outliers using statistical methods
-        points_cropped = self.remove_outliers(points_cropped)
+        # points_cropped = self.remove_outliers(points_cropped)
         
-        # np.save(f"point_cloud_cropped_{self.step_count}.npy", points_cropped)
+        if DEBUG:
+            t4 = time.time()
+            print(f"Time to remove outliers: {t4 - t3} s")
+        
+            np.save(f"point_cloud_cropped_{self.step_count}.npy", points_cropped)
 
         # If not enough points, pad with zeros
         if points_cropped.shape[0] < num_points:
@@ -470,9 +536,14 @@ class KortexEnv(gym.Env):
             sampled_points = np.hstack((sampled_points_xyz, sampled_points_rgb))
         else:
             sampled_points = points_cropped  # Already padded if needed
+            
+        if DEBUG:
+            t5 = time.time()
+            print(f"Time to downsample point cloud: {t5 - t4} s")
 
         point_cloud = sampled_points.astype(np.float32)
-        # np.save(f"point_cloud_downsampled_{self.step_count}.npy", point_cloud)
+        if DEBUG:
+            np.save(f"point_cloud_downsampled_{self.step_count}.npy", point_cloud)
         return point_cloud
 
     def detect_plane(self, points_xyz):
