@@ -330,39 +330,83 @@ class KortexEnv(gym.Env):
         Executes one time step within the environment.
 
         Args:
-            action (np.ndarray): Action to be taken. It's an array:
-                - First 3 are delta translation
-                - Next 6 are delta rotation (6D representation)
-                - Next value is the gripper command (0: open, 1: close)
-
-        Returns:
-            obs (Dict): Observation from the environment.
-            reward (float): The reward obtained from this step.
-            done (bool): Whether the episode has ended.
-            info (Dict): Additional information.
+            action (np.ndarray): Action to be taken.
+                Format: [Δx, Δy, Δz, rot_6d(6), gripper]
+                This is the delta EE pose in robot frame, which we must convert to EE frame.
         """
         if DEBUG:
-            print(f"action: {action}")
-        # Extract delta translation, delta rotation (6D), and gripper command from action
-        delta_translation = action[:3]
-        delta_rotation_6d = action[3:9]
+            print(f"Received action (robot frame): {action}")
+
+        def convert_robot_to_ee(R_abs, p_abs, Vd_robot):
+            """
+            Convert delta pose from robot frame to end-effector frame.
+            Vd_robot: [Δx, Δy, Δz, drx, dry, drz] (pos+rotvec in robot frame)
+            R_abs: 3x3 rotation matrix of EE in robot frame
+            p_abs: 3D position of EE in robot frame
+            """
+            def skew_symmetric(vec):
+                x, y, z = vec
+                return np.array([
+                    [0, -z, y],
+                    [z, 0, -x],
+                    [-y, x, 0]
+                ])
+
+            p_skew = skew_symmetric(p_abs)
+            # Ad_inv = [[R^T, -R^T p^x]; [0, R^T]]
+            Ad_inv = np.block([
+                [R_abs.T, -R_abs.T @ p_skew],
+                [np.zeros((3,3)), R_abs.T]
+            ])
+            return Ad_inv @ Vd_robot
+
+        # Extract components from action (robot frame)
+        delta_translation_robot = action[0:3]
+        delta_rotation_6d_robot = action[3:9]
         gripper_command = action[9]
 
-        # Convert 6D rotation back to quaternion
-        delta_rotation_quat = self.rotation_6d_to_quat(delta_rotation_6d)
-        delta_pose = np.concatenate([delta_translation, delta_rotation_quat])
+        # Convert rotation 6D to quaternion (robot frame)
+        delta_rotation_quat_robot = self.rotation_6d_to_quat(delta_rotation_6d_robot)
+
+        # Convert quaternion to rotation vector
+        delta_rotvec_robot = R.from_quat(delta_rotation_quat_robot).as_rotvec()
+
+        # Construct 6D delta in robot frame: [pos, rotvec]
+        Vd_robot = np.concatenate([delta_translation_robot, delta_rotvec_robot])
+
+        # Get current absolute EE pose in robot frame
+        if self.current_pose is None:
+            raise ValueError("Current pose is not available yet.")
+        p_abs = self.current_pose["position"]
+        q_abs = self.current_pose["orientation"]
+        R_abs = R.from_quat(q_abs).as_matrix()
+
+        # Convert robot-frame delta to EE-frame delta
+        Vd_ee = convert_robot_to_ee(R_abs, p_abs, Vd_robot)
+
+        # Now convert Vd_ee back to position + quaternion in EE frame
+        new_delta_pos_ee = Vd_ee[:3]
+        new_delta_rotvec_ee = Vd_ee[3:6]
+        new_delta_quat_ee = R.from_rotvec(new_delta_rotvec_ee).as_quat()
+
+        # Convert quaternion back to 6D if needed or just use quaternion
+        # Here we eventually call update_accumulated_pose which uses a 7D delta pose (pos+quat)
+        delta_pose = np.concatenate([new_delta_pos_ee, new_delta_quat_ee])
 
         # Move gripper if ROS available
         self.move_gripper([gripper_command])
 
-        # Update accumulated pose
-        delta_pose_full = np.zeros(13)
+        # Update accumulated pose in EE frame
+        # Construct the full delta_pose including button states
+        delta_pose_full = np.zeros(13, dtype=np.float32)
         delta_pose_full[:7] = delta_pose
+        # Buttons and triggers (just placeholders)
         delta_pose_full[7] = 0  # touchpad
-        delta_pose_full[8] = gripper_command  # trigger (gripper)
+        delta_pose_full[8] = gripper_command  # trigger controls gripper
         delta_pose_full[9] = 0  # grip
-        delta_pose_full[10] = 0  # primary_button
-        delta_pose_full[11:] = [0, 0]
+        delta_pose_full[10] = 0 # primary_button
+        delta_pose_full[11] = 0 # secondary_button
+        delta_pose_full[12] = 0 # direction
 
         self.update_accumulated_pose(delta_pose_full)
 
@@ -378,7 +422,6 @@ class KortexEnv(gym.Env):
 
         # Get observation
         obs = self.get_observation()
-        # obs = None
 
         # Set reward (customize as needed)
         reward = 0.0
@@ -391,6 +434,9 @@ class KortexEnv(gym.Env):
                 self.pd_controller.stop()
 
         info = {}
+
+        if DEBUG:
+            print(f"Action converted to EE frame and applied: Δpos={new_delta_pos_ee}, Δquat={new_delta_quat_ee}")
 
         return obs, reward, done, info
 
