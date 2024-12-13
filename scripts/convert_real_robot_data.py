@@ -71,7 +71,7 @@ def preprocess_point_cloud(points, use_cuda=True, step_index=1):
     WORK_SPACE = [
         [0.08, 0.72],
         [-0.49, 0.31],
-        [-0.02, 0.43]
+        [0.025, 0.43]
     ]
     
      # crop
@@ -79,9 +79,9 @@ def preprocess_point_cloud(points, use_cuda=True, step_index=1):
                                 (points[..., 1] > WORK_SPACE[1][0]) & (points[..., 1] < WORK_SPACE[1][1]) &
                                 (points[..., 2] > WORK_SPACE[2][0]) & (points[..., 2] < WORK_SPACE[2][1]))]
     
-    points_xyz_cropped = points[..., :3]
-    plane_model, inliers = detect_plane(points_xyz_cropped)
-    points = points[~inliers]
+    # points_xyz_cropped = points[..., :3]
+    # plane_model, inliers = detect_plane(points_xyz_cropped)
+    # points = points[~inliers]
     
     points = remove_outliers(points)
     
