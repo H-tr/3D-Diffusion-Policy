@@ -142,7 +142,7 @@ save_data_path = '/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data/pour.z
 # Find all episode directories that contain rgb_*.jpg files
 demo_dirs = []
 for root, _, files in os.walk(expert_data_path):
-    if any(f.startswith('abs_') and f.endswith('.npy') for f in files):
+    if any(f.startswith('action_') and f.endswith('.npy') for f in files):
         demo_dirs.append(root)
 demo_dirs = sorted(demo_dirs)
 
@@ -187,8 +187,8 @@ for demo_dir in demo_dirs:
     
     assert rgb_len == depth_len and depth_len == pcd_len, "RGB, depth, and pointcloud files are not in the same length."
     
-    action_values = np.load(os.path.join(demo_dir, 'delta_ee_pose.npy'))
-    state_values = np.load(os.path.join(demo_dir, 'abs_ee_pose.npy'))
+    action_values = np.load(os.path.join(demo_dir, 'action_ee.npy'))
+    state_values = np.load(os.path.join(demo_dir, 'ee_poses.npy'))
     
     action_values = np.array([
         np.concatenate([

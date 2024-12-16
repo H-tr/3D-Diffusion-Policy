@@ -363,11 +363,8 @@ class KortexEnv(gym.Env):
         delta_pose_full[10] = 0  # primary_button
         delta_pose_full[11:] = [0, 0]
 
-        self.update_accumulated_pose(delta_pose_full)
-
-        # Publish desired pose if ROS available
         if ROS_AVAILABLE:
-            self.publish_desired_pose(self.accumulated_pose)
+            self.action_pose_step(delta_pose_full)
 
         # Sleep to maintain control frequency
         time.sleep(1.0 / self.f / self.speed)
@@ -741,6 +738,52 @@ class KortexEnv(gym.Env):
 
         self.accumulated_pose[:3] = new_position
         self.accumulated_pose[3:7] = new_orientation_quat
+        
+    def action_pose_step(self, delta_pose):
+        """
+        Updates the robot's end-effector pose by adding a delta pose in the base frame
+        and publishes this new pose. Optionally controls the gripper using the last
+        two entries in delta_pose if they exist.
+        
+        Args:
+            delta_pose (np.ndarray): A 13-element array where:
+                - delta_pose[:3]   -> Delta translation in base frame (x, y, z)
+                - delta_pose[3:7]  -> Delta rotation quaternion in base frame (qx, qy, qz, qw)
+                - delta_pose[7:9]  -> Optional gripper command(s), e.g. [trigger, grip]
+                - delta_pose[9:]   -> Possibly other button states (if needed)
+        """
+        # Increment the environment's step count
+        self.step_count += 1
+
+        # -- Get the current pose in the base frame --
+        current_position = self.current_pose["position"]      # shape (3,)
+        current_orientation_quat = self.current_pose["orientation"]  # shape (4,)
+
+        # Convert current orientation to a rotation object
+        R_current = R.from_quat(current_orientation_quat)
+
+        # Parse delta translation and rotation (quaternion) from the action
+        delta_translation = delta_pose[:3]     # in base frame
+        delta_rot_quat = delta_pose[3:7]       # rotation in base frame
+        R_delta = R.from_quat(delta_rot_quat)
+
+        # -- Compute the new orientation in base frame --
+        R_new = R_delta * R_current
+        new_orientation_quat = R_new.as_quat()
+
+        # -- Compute the new position in base frame --
+        new_position = current_position + delta_translation
+
+        # -- Combine into a 7D pose [x, y, z, qx, qy, qz, qw] --
+        desired_pose = np.concatenate((new_position, new_orientation_quat))
+
+        # -- Send the new pose to the robot (publish to PD controller) --
+        self.publish_desired_pose(desired_pose)
+
+        # -- Optional gripper control (if the last two entries of delta_pose are used for that) --
+        # Example usage:
+        gripper = delta_pose[7:9]  # If your logic stores gripper commands here
+        self.move_gripper(gripper)
 
     def publish_desired_pose(self, desired_pose):
         if not ROS_AVAILABLE:
