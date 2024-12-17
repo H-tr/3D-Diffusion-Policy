@@ -34,7 +34,7 @@ from gym import spaces
 
 my_path = os.path.dirname(os.path.abspath(__file__))
 
-DEBUG = True
+DEBUG = False
 
 
 class KortexEnv(gym.Env):
@@ -151,6 +151,8 @@ class KortexEnv(gym.Env):
             [-0.02110095954717077, -0.9043238836655059, -0.4263250672178739, 0.3630794805194548],
             [0.0, 0.0, 0.0, 1.0]
         ])
+        
+        self.curent_gripper_value = None
 
         # Define workspace boundaries
         self.WORK_SPACE = [
@@ -346,13 +348,14 @@ class KortexEnv(gym.Env):
         delta_translation = action[:3]
         delta_rotation_6d = action[3:9]
         gripper_command = action[9]
+        self.curent_gripper_value = 1 if gripper_command > 0.5 else 0
 
         # Convert 6D rotation back to quaternion
         delta_rotation_quat = self.rotation_6d_to_quat(delta_rotation_6d)
         delta_pose = np.concatenate([delta_translation, delta_rotation_quat])
 
         # Move gripper if ROS available
-        self.move_gripper([gripper_command])
+        # self.move_gripper(gripper_command)
 
         # Update accumulated pose
         delta_pose_full = np.zeros(13)
@@ -367,7 +370,7 @@ class KortexEnv(gym.Env):
             self.action_pose_step(delta_pose_full)
 
         # Sleep to maintain control frequency
-        time.sleep(1.0 / self.f / self.speed)
+        # time.sleep(1.0 / self.f / self.speed)
 
         # Increment step count
         self.step_count += 1
@@ -486,7 +489,7 @@ class KortexEnv(gym.Env):
         point_xyz_transformed = points_transformed[:, :3]
         if DEBUG:
             t2 = time.time()
-        print(f"Time to transform point cloud: {t2 - t1} s")
+            print(f"Time to transform point cloud: {t2 - t1} s")
 
         # Combine XYZ with RGB
         points_transformed = np.hstack((point_xyz_transformed, point_rgb))
@@ -628,7 +631,8 @@ class KortexEnv(gym.Env):
 
     def get_gripper_state(self):
         # Placeholder: Return 1.0 if gripper closed, else 0.0.
-        return 0.0
+        gripper_command = 1 if self.joint_positions[7] > 0.5 else 0
+        return gripper_command
 
     def reset(self):
         self.step_count = 0
@@ -673,7 +677,7 @@ class KortexEnv(gym.Env):
             return
 
         # Open gripper
-        self.move_gripper([0])
+        self.move_gripper(0)
 
         # Create trajectory
         if self.current_pose is not None:
@@ -752,9 +756,6 @@ class KortexEnv(gym.Env):
                 - delta_pose[7:9]  -> Optional gripper command(s), e.g. [trigger, grip]
                 - delta_pose[9:]   -> Possibly other button states (if needed)
         """
-        # Increment the environment's step count
-        self.step_count += 1
-
         # -- Get the current pose in the base frame --
         current_position = self.current_pose["position"]      # shape (3,)
         current_orientation_quat = self.current_pose["orientation"]  # shape (4,)
@@ -782,7 +783,7 @@ class KortexEnv(gym.Env):
 
         # -- Optional gripper control (if the last two entries of delta_pose are used for that) --
         # Example usage:
-        gripper = delta_pose[7:9]  # If your logic stores gripper commands here
+        gripper = delta_pose[8]  # If your logic stores gripper commands here
         self.move_gripper(gripper)
 
     def publish_desired_pose(self, desired_pose):
@@ -810,7 +811,7 @@ class KortexEnv(gym.Env):
             # No ROS environment, just skip
             return
 
-        target_position = 1.0 if gripper[-1] > 0.5 else 0.0
+        target_position = 1.0 if gripper > 0.5 else 0.0
 
         request = SendGripperCommandRequest()
         request.input.mode = GripperMode.GRIPPER_POSITION
