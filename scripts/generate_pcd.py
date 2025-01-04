@@ -128,7 +128,7 @@ def create_pointcloud(rgb_path, depth_path, save_dir, frame_idx):
 
 def main():
     # 1. Input is a list of task names that user defined (manually input)
-    user_defined_tasks = ['pour']  # Replace with your task names
+    user_defined_tasks = ['cut']  # Replace with your task names
 
     root_dir = Path("/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data")
 

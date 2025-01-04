@@ -13,6 +13,8 @@ import cv2
 from pathlib import Path
 from scipy.spatial.transform import Rotation as R
 
+DEBUG = False
+
 def quaternion_to_6d(q: np.ndarray) -> np.ndarray:
     """
     Using 6 DoF as representation of rotation
@@ -31,12 +33,10 @@ def quaternion_to_6d(q: np.ndarray) -> np.ndarray:
     return rot_6d
 
 
-extrinsics_matrix = np.array([
-            [-0.9995885060604603, 0.02737040572434423, -0.008583673007599053, 0.3145712335775515], 
-            [0.019431110570558213, 0.42596851329953994, -0.9045293016919754, 0.5144627713101816], 
-            [-0.02110095954717077, -0.9043238836655059, -0.4263250672178739, 0.3630794805194548], 
-            [0.0, 0.0, 0.0, 1.0]
-        ])
+extrinsics_matrix = np.array([[-0.9927600949599338, 0.0004272204928813632, -0.1201133270615438, 0.46120978686750763+0.01], 
+                              [0.1124660752676588, 0.3544329526727961, -0.9282934148067259, 0.6150804834711907+0.05], 
+                              [0.04217553519556398, -0.9350813331161595, -0.35191493956448316, 0.39159712047040346-0.01], 
+                              [0.0, 0.0, 0.0, 1.0]])
 
 def farthest_point_sampling(points, num_points=1024, use_cuda=True):
     K = [num_points]
@@ -65,13 +65,14 @@ def preprocess_point_cloud(points, use_cuda=True, step_index=1):
     points[..., :3] = point_xyz_transformed
     
     # save the point cloud for debug
-    # np.save(f'/data/home/tianrun/3D-Diffusion-Policy/tmp/scaled_pcd_{step_index}.npy', points)
+    if DEBUG:
+        np.save(f'/data/home/tianrun/3D-Diffusion-Policy/tmp/scaled_pcd_{step_index}.npy', points)
     
     # Define workspace boundaries
     WORK_SPACE = [
-        [0.08, 0.72],
-        [-0.49, 0.31],
-        [0.025, 0.43]
+        [0.09, 0.71],
+        [-0.55, 0.36],
+        [0.00, 0.50]
     ]
     
      # crop
@@ -83,6 +84,10 @@ def preprocess_point_cloud(points, use_cuda=True, step_index=1):
     # plane_model, inliers = detect_plane(points_xyz_cropped)
     # points = points[~inliers]
     
+    # save the cropped point cloud for debug
+    if DEBUG:
+        np.save(f'/data/home/tianrun/3D-Diffusion-Policy/tmp/cropped_pcd_{step_index}.npy', points)
+    
     points = remove_outliers(points)
     
     points_xyz = points[..., :3]
@@ -90,6 +95,10 @@ def preprocess_point_cloud(points, use_cuda=True, step_index=1):
     sample_indices = sample_indices.cpu()
     points_rgb = points[sample_indices, 3:][0]
     points = np.hstack((points_xyz, points_rgb))
+    
+    # save the sampled point cloud for debug
+    if DEBUG:
+        np.save(f'/data/home/tianrun/3D-Diffusion-Policy/tmp/sampled_pcd_{step_index}.npy', points)
     return points
    
 def preproces_image(image):
@@ -136,8 +145,8 @@ def remove_outliers(points, neighbors=30, std_ratio=1.0):
     mask = mean_distances < threshold
     return points[mask]
 
-expert_data_path = '/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data/pour/'
-save_data_path = '/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data/pour.zarr'
+expert_data_path = '/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data/cut/'
+save_data_path = '/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data/cut.zarr'
 
 # Find all episode directories that contain rgb_*.jpg files
 demo_dirs = []
