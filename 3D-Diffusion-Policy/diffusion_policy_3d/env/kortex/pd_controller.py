@@ -2,6 +2,7 @@
 import threading
 import rospy
 import numpy as np
+from collections import deque
 from kortex_driver.msg import (
     BaseCyclic_Feedback,
     TwistCommand,
@@ -17,15 +18,73 @@ from urdf_parser_py.urdf import URDF
 from kdl_parser_py.urdf import treeFromUrdfModel  # For KDL tree parsing
 
 
+def interpolate_trajectory_fast(trajectory, num_inter_points=3):
+    """
+    Fast linear interpolation for real-time control with small distances.
+    Maintains same interface as original interpolator but optimized for speed.
+
+    Args:
+        trajectory: np.array of points in x, y, z, qx, qy, qz, qw format
+        num_inter_points: number of interpolated points between each pair
+        start_ratio: not used in this version for simplification
+
+    Returns:
+        interpolated_trajectory: np.array of interpolated points
+    """
+    trajectory = np.array(trajectory)
+    n_points = len(trajectory)
+
+    if n_points < 2:
+        return trajectory
+
+    # Pre-allocate output array for speed
+    total_points = (n_points - 1) * (num_inter_points + 1) + 1
+    interpolated = np.zeros((total_points, 7))
+
+    idx = 0
+    for i in range(n_points - 1):
+        # Current and next positions
+        pos1, pos2 = trajectory[i, :3], trajectory[i + 1, :3]
+
+        # Current and next quaternions
+        q1, q2 = trajectory[i, 3:], trajectory[i + 1, 3:]
+
+        # Ensure quaternions are close together (take shortest path)
+        if np.dot(q1, q2) < 0:
+            q2 = -q2
+
+        # Add interpolated points
+        for j in range(num_inter_points + 1):
+            t = j / (num_inter_points + 1)
+
+            # Linear interpolation for position
+            pos = (1 - t) * pos1 + t * pos2
+
+            # Linear interpolation for quaternion
+            # For small rotations, this is a good approximation of SLERP
+            # and much faster to compute
+            q = (1 - t) * q1 + t * q2
+            # Normalize quaternion
+            q = q / np.linalg.norm(q)
+
+            # Store interpolated point
+            interpolated[idx] = np.concatenate([pos, q])
+            idx += 1
+
+    # Add final point
+    interpolated[idx] = trajectory[-1]
+
+    return interpolated[: idx + 1]
+
 class KortexPDController:
     def __init__(self, robot_name="my_gen3", rate=100, home_joint_positions=None):
         # Store the robot name for topic names
         self.robot_name = robot_name
 
         # PD gains
-        self.Kp = np.array([1.5, 1.5, 1.5])
+        self.Kp = np.array([3.0, 3.0, 3.0])
         self.Kd = np.array([0.001, 0.001, 0.001])
-        self.Kp_rot = np.array([1.5, 1.5, 1.5])
+        self.Kp_rot = np.array([3.0, 3.0, 3.0])
         self.Kd_rot = np.array([0.01, 0.01, 0.01])
 
         # State variables
@@ -63,11 +122,21 @@ class KortexPDController:
         # Initialize KDL
         self.initialize_kdl()
 
-        # Control loop frequency
-        self.rate = rospy.Rate(rate)
+        # Control loop timing
+        self.control_rate = rate
+        self.control_period = rospy.Duration(1.0 / rate)
+        self.next_control_time = rospy.Time.now()
 
         # Store home joint positions
         self.home_joint_positions = home_joint_positions  # Add home joint positions
+
+        # Buffer for desired poses and interpolated poses
+        self.window_size = 2  # Number of points to keep for interpolation
+        self.pose_buffer = deque(maxlen=self.window_size)
+        self.time_buffer = deque(maxlen=self.window_size)
+        self.interpolated_poses = None
+        self.current_interp_index = 0
+        self.last_interpolation_time = None
 
     def initialize_kdl(self):
         # Load URDF from parameter server
@@ -110,13 +179,15 @@ class KortexPDController:
             ).as_quat(),
         }
         # Extract current joint positions
-        self.current_joint_positions = []
+        joint_positions = []
         for actuator in msg.actuators:
-            self.current_joint_positions.append(np.deg2rad(actuator.position))
+            joint_positions.append(np.deg2rad(actuator.position))
+
+        self.current_joint_positions = joint_positions
 
     def desired_pose_callback(self, msg):
-        # Extract desired end-effector pose from PoseStamped message
-        self.desired_pose = {
+        # Extract desired pose
+        new_pose = {
             "position": np.array(
                 [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]
             ),
@@ -129,8 +200,82 @@ class KortexPDController:
                 ]
             ),
         }
-        # Update the last command time
+
+        # Get current timestamp
+        current_time = rospy.Time.now().to_sec()
+
+        # Add to buffer and check if we can interpolate
+        if self.buffer_desired_pose(new_pose, current_time):
+            self.generate_interpolation()
+
         self.last_command_time = rospy.Time.now()
+        self.desired_pose = new_pose
+
+    def buffer_desired_pose(self, pose, timestamp):
+        """
+        Add new pose to the buffer and handle interpolation
+
+        Args:
+            pose: dict with 'position' (np.array) and 'orientation' (np.array)
+            timestamp: float, time in seconds
+        """
+        # Convert pose to flat array for storage
+        pose_array = np.concatenate([pose["position"], pose["orientation"]])
+
+        # Add to circular buffers
+        self.pose_buffer.append(pose_array)
+        self.time_buffer.append(timestamp)
+
+        return (
+            len(self.pose_buffer) >= 2
+        )  # Return True if we have enough points for interpolation
+
+    def generate_interpolation(self):
+        """
+        Generate interpolated trajectory from buffered points
+        """
+        # Convert buffer to numpy array for interpolation
+        trajectory = np.array(list(self.pose_buffer))
+        times = np.array(list(self.time_buffer))
+
+        # Calculate required interpolation points
+        if len(times) >= 2:
+            dt = times[-1] - times[-2]
+            num_points = max(1, int(dt * self.control_rate))
+
+            # Generate interpolated trajectory
+            try:
+                self.interpolated_poses = interpolate_trajectory_fast(
+                    trajectory,
+                    num_inter_points=num_points,
+                )
+                self.current_interp_index = 0
+                self.last_interpolation_time = times[-1]
+            except Exception as e:
+                rospy.logwarn(f"Interpolation failed: {e}")
+                self.interpolated_poses = None
+
+    def get_interpolated_pose(self):
+        """
+        Get the current interpolated pose based on control rate
+
+        Returns:
+            dict: {'position': np.array, 'orientation': np.array}
+        """
+        # If no interpolation available, return last desired pose
+        if self.interpolated_poses is None or self.current_interp_index >= len(
+            self.interpolated_poses
+        ):
+            if len(self.pose_buffer) > 0:
+                last_pose = self.pose_buffer[-1]
+                return {"position": last_pose[:3], "orientation": last_pose[3:]}
+            return self.desired_pose
+
+        # Get interpolated pose
+        pose = self.interpolated_poses[self.current_interp_index]
+        self.current_interp_index += 1
+
+        return {"position": pose[:3], "orientation": pose[3:]}
 
     def start(self):
         if not self.processing:
@@ -152,6 +297,22 @@ class KortexPDController:
 
     def control_loop(self):
         while not rospy.is_shutdown() and self.processing:
+            # Calculate time until next control cycle
+            now = rospy.Time.now()
+            sleep_duration = self.next_control_time - now
+
+            # Sleep until next control cycle
+            if sleep_duration > rospy.Duration(0):
+                rospy.sleep(sleep_duration.to_sec())
+            else:
+                # If we missed the cycle, skip ahead to next
+                cycles_missed = int(
+                    (now - self.next_control_time).to_sec() * self.control_rate
+                )
+                self.next_control_time += self.control_period * (cycles_missed + 1)
+                # rospy.logwarn(f"Control loop missed {cycles_missed} cycles")
+
+            # Execute control logic
             if (
                 self.current_pose is not None
                 and self.desired_pose is not None
@@ -163,82 +324,23 @@ class KortexPDController:
                     current_time - self.last_command_time
                 ).to_sec()
                 if time_since_last_command > 5.0:
-                    # rospy.logwarn(
-                    #     "No new desired pose received for 5 seconds. Stopping the robot."
-                    # )
                     self.stop_robot()
                 else:
-                    # Choose which control method to use:
-                    # Uncomment one of the following lines to select the control method
-
-                    # self.compute_and_send_velocity_command()  # Original PD control using twist commands
-                    self.compute_and_send_joint_velocity_command()  # New control using joint velocities
+                    # Get interpolated desired pose
+                    interpolated_desired_pose = self.get_interpolated_pose()
+                    self.desired_pose = interpolated_desired_pose
+                    self.compute_and_send_joint_velocity_command()
             else:
-                # If initial data is not yet received, ensure the robot is stopped
                 self.stop_robot()
-            self.rate.sleep()
 
-    def compute_and_send_velocity_command(self):
-        # Compute position error
-        position_error = self.desired_pose["position"] - self.current_pose["position"]
-
-        # Compute orientation error using rotation matrices
-        R_desired = R.from_quat(self.desired_pose["orientation"])
-        R_current = R.from_quat(self.current_pose["orientation"])
-
-        # Compute rotation error in the base frame
-        R_error = R_desired * R_current.inv()
-
-        # Convert rotation error to rotation vector (axis-angle)
-        angular_error = R_error.as_rotvec()
-
-        # Adjust axis order and signs if necessary (depending on your coordinate frame)
-
-        # Ensure the rotation angle is within [-π, π]
-        angle = np.linalg.norm(angular_error)
-        if angle > np.pi:
-            angular_error = angular_error * ((angle - 2 * np.pi) / angle)
-
-        # Time step
-        current_time = rospy.Time.now()
-        dt = (current_time - self.last_time).to_sec()
-        if dt == 0:
-            dt = 1e-6  # Avoid division by zero
-
-        # Derivative of errors
-        position_error_dot = (position_error - self.last_position_error) / dt
-        angular_error_dot = (angular_error - self.last_angular_error) / dt
-
-        # PD control law
-        linear_velocity = self.Kp * position_error + self.Kd * position_error_dot
-        angular_velocity = self.Kp_rot * angular_error + self.Kd_rot * angular_error_dot
-
-        # Create and publish TwistCommand
-        twist_msg = TwistCommand()
-        twist_msg.reference_frame = 0  # Base frame
-
-        twist_msg.twist.linear_x = linear_velocity[0]
-        twist_msg.twist.linear_y = linear_velocity[1]
-        twist_msg.twist.linear_z = linear_velocity[2]
-
-        twist_msg.twist.angular_x = angular_velocity[0]
-        twist_msg.twist.angular_y = angular_velocity[1]
-        twist_msg.twist.angular_z = angular_velocity[2]
-        twist_msg.duration = 0  # Continuous
-
-        # Publish the twist command
-        self.velocity_pub.publish(twist_msg)
-
-        # Update last errors and time
-        self.last_position_error = position_error
-        self.last_angular_error = angular_error
-        self.last_time = current_time
+            # Schedule next control cycle
+            self.next_control_time += self.control_period
 
     def compute_and_send_joint_velocity_command(self):
         # Compute position error
         position_error = self.desired_pose["position"] - self.current_pose["position"]
 
-        if np.linalg.norm(position_error) > 0.4:
+        if np.linalg.norm(position_error) > 0.5:
             rospy.logwarn("Position error is too high. Not moving.")
             self.stop_robot()
             return
@@ -273,19 +375,20 @@ class KortexPDController:
         twist_error[0:3] = self.Kp * position_error + self.Kd * position_error_dot
         twist_error[3:6] = self.Kp_rot * angular_error + self.Kd_rot * angular_error_dot
 
-        # Create KDL JntArray for current joint positions
-        q_current = PyKDL.JntArray(self.num_joints)
-        for i in range(self.num_joints):
-            q_current[i] = self.current_joint_positions[i]
-
-        # Compute Jacobian
-        jacobian = PyKDL.Jacobian(self.num_joints)
-        self.jacobian_solver.JntToJac(q_current, jacobian)
-        jacobian_array = np.array(
-            [[jacobian[i, j] for j in range(self.num_joints)] for i in range(6)]
-        )
-
         try:
+            # Create KDL JntArray for current joint positions
+            q_current = PyKDL.JntArray(self.num_joints)
+
+            for i in range(self.num_joints):
+                q_current[i] = self.current_joint_positions[i]
+
+            # Compute Jacobian
+            jacobian = PyKDL.Jacobian(self.num_joints)
+            self.jacobian_solver.JntToJac(q_current, jacobian)
+            jacobian_array = np.array(
+                [[jacobian[i, j] for j in range(self.num_joints)] for i in range(6)]
+            )
+
             # Compute the pseudoinverse of the Jacobian
             jacobian_pinv = np.linalg.pinv(jacobian_array)
 
@@ -375,6 +478,3 @@ class KortexPDController:
 
         # Publish the stop command
         self.joint_velocity_pub.publish(joint_velocity_msg)
-
-
-# No main function since this class is intended to be integrated into an existing node

@@ -752,9 +752,22 @@ class KortexEnv(gym.Env):
                 - delta_pose[7:9]  -> Optional gripper command(s), e.g. [trigger, grip]
                 - delta_pose[9:]   -> Possibly other button states (if needed)
         """
-        # -- Get the current pose in the base frame --
-        current_position = self.current_pose["position"]      # shape (3,)
-        current_orientation_quat = self.current_pose["orientation"]  # shape (4,)
+        # Initialize accumulated pose if not yet initialized
+        if self.accumulated_pose is None:
+            if self.current_pose is None:
+                msg = "Current pose is not available yet."
+                if ROS_AVAILABLE:
+                    rospy.logwarn(msg)
+                else:
+                    print(msg)
+                return
+            self.accumulated_pose = np.concatenate(
+                (self.current_pose["position"], self.current_pose["orientation"])
+            )
+
+        # -- Get the accumulated pose --
+        current_position = self.accumulated_pose[:3]      # shape (3,)
+        current_orientation_quat = self.accumulated_pose[3:7]  # shape (4,)
 
         # Convert current orientation to a rotation object
         R_current = R.from_quat(current_orientation_quat)
@@ -771,14 +784,17 @@ class KortexEnv(gym.Env):
         # -- Compute the new position in base frame --
         new_position = current_position + delta_translation
 
+        # -- Update accumulated pose --
+        self.accumulated_pose[:3] = new_position
+        self.accumulated_pose[3:7] = new_orientation_quat
+
         # -- Combine into a 7D pose [x, y, z, qx, qy, qz, qw] --
         desired_pose = np.concatenate((new_position, new_orientation_quat))
 
         # -- Send the new pose to the robot (publish to PD controller) --
         self.publish_desired_pose(desired_pose)
 
-        # -- Optional gripper control (if the last two entries of delta_pose are used for that) --
-        # Example usage:
+        # -- Optional gripper control --
         gripper = delta_pose[8]  # If your logic stores gripper commands here
         self.move_gripper(gripper)
 
