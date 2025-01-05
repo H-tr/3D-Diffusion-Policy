@@ -18,10 +18,16 @@ shape_meta: &shape_meta
     shape: [10]
 
 env_runner:
+  # _target_: diffusion_policy_3d.env_runner.base_runner.KortexRunner
+  # max_steps: 5000
+  # n_obs_steps: ${n_obs_steps}
+  # n_action_steps: ${n_action_steps}
+  # fps: 10
+  # task_name: cut
 
 dataset:
   _target_: diffusion_policy_3d.dataset.kortex_dataset.KortexDataset
-  zarr_path: data/kortex_data/cut_10.zarr
+  zarr_path: data/kortex_data/cut.zarr
   horizon: ${horizon}
   pad_before: ${eval:'${n_obs_steps}-1'}
   pad_after: ${eval:'${n_action_steps}-1'}
