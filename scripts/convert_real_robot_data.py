@@ -145,8 +145,8 @@ def remove_outliers(points, neighbors=30, std_ratio=1.0):
     mask = mean_distances < threshold
     return points[mask]
 
-expert_data_path = '/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data/scoop/'
-save_data_path = '/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data/scoop.zarr'
+expert_data_path = '/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data/sweep/'
+save_data_path = '/data/home/tianrun/3D-Diffusion-Policy/data/kortex_data/sweep.zarr'
 
 # Find all episode directories that contain rgb_*.jpg files
 demo_dirs = []
